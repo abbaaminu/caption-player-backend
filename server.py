@@ -27,6 +27,10 @@ except Exception as e:
     print(f"❌ Failed to initialize Supabase client: {e}")
     sys.exit(1)
 
+@app.route("/", methods=["GET"])
+def home():
+    return jsonify({"message": "Caption Player Licensing Server is running!"})
+
 @app.route("/verify", methods=["POST"])
 def verify_license():
     data = request.get_json() or {}
