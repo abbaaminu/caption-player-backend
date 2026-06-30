@@ -15,10 +15,9 @@ load_dotenv()
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
 
-# Secrets for verifying that webhook calls genuinely came from Paystack/Paddle,
-# not from anyone who guesses your endpoint URL.
-PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")  # starts with sk_...
-PADDLE_WEBHOOK_SECRET = os.environ.get("PADDLE_WEBHOOK_SECRET")  # from Paddle dashboard
+# Secrets for verifying webhook validity
+PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")  
+PADDLE_WEBHOOK_SECRET = os.environ.get("PADDLE_WEBHOOK_SECRET")  
 
 if not supabase_url or not supabase_key:
     print("CRITICAL ERROR: Missing Supabase credentials in Environment Variables!")
@@ -103,7 +102,7 @@ def verify_license():
 # ---------------------------------------------------------------------------
 @app.route("/webhook/paystack", methods=["POST"])
 def paystack_webhook():
-    raw_body = request.get_data()  # MUST use raw bytes for signature check, not parsed JSON
+    raw_body = request.get_data()  
     signature = request.headers.get("x-paystack-signature", "")
 
     if not PAYSTACK_SECRET_KEY:
@@ -137,30 +136,32 @@ def paystack_webhook():
 
 
 # ---------------------------------------------------------------------------
-# PADDLE WEBHOOK (Paddle Billing — HMAC signature in 'Paddle-Signature' header)
+# PADDLE WEBHOOK (Paddle Billing)
 # ---------------------------------------------------------------------------
 def verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
     """
-    Paddle Billing sends header like: 'ts=1700000000;h1=abcdef...'
-    The signed string is '{ts}:{raw_body}', HMAC-SHA256 with your webhook secret.
+    Validates Paddle's HMAC-SHA256 timestamped payload.
     """
     if not PADDLE_WEBHOOK_SECRET or not signature_header:
         return False
 
-    parts = dict(p.split("=", 1) for p in signature_header.split(";") if "=" in p)
-    ts = parts.get("ts")
-    h1 = parts.get("h1")
-    if not ts or not h1:
+    try:
+        parts = dict(p.split("=", 1) for p in signature_header.split(";") if "=" in p)
+        ts = parts.get("ts")
+        h1 = parts.get("h1")
+        if not ts or not h1:
+            return False
+
+        signed_payload = f"{ts}:".encode("utf-8") + raw_body
+        computed = hmac.new(
+            PADDLE_WEBHOOK_SECRET.encode("utf-8"),
+            signed_payload,
+            hashlib.sha256
+        ).hexdigest()
+
+        return hmac.compare_digest(computed, h1)
+    except Exception:
         return False
-
-    signed_payload = f"{ts}:".encode("utf-8") + raw_body
-    computed = hmac.new(
-        PADDLE_WEBHOOK_SECRET.encode("utf-8"),
-        signed_payload,
-        hashlib.sha256
-    ).hexdigest()
-
-    return hmac.compare_digest(computed, h1)
 
 
 @app.route("/webhook/paddle", methods=["POST"])
@@ -175,30 +176,27 @@ def paddle_webhook():
     payload = request.get_json() or {}
     event_type = payload.get("event_type")
 
-    if event_type == "transaction.completed":
+    # Catch subscription.created or explicit transaction completion states
+    if event_type in ["subscription.created", "transaction.completed"]:
         tx_data = payload.get("data", {})
-        reference = tx_data.get("id")  # Paddle transaction id, used as our reference
-        email = (tx_data.get("customer") or {}).get("email", "")
+        reference = tx_data.get("id")  
+        
+        customer_obj = tx_data.get("customer", {})
+        email = customer_obj.get("email", "") if isinstance(customer_obj, dict) else ""
 
         if reference:
             upsert_license(reference, email, source="paddle")
         else:
-            print("Paddle transaction.completed event missing id; skipped.")
+            print(f"Paddle event {event_type} missing reference ID; skipped.")
 
     return jsonify({"received": True}), 200
 
 
 # ---------------------------------------------------------------------------
 # THANK-YOU / DEEP-LINK HANDOFF PAGE
-# Paystack and Paddle should redirect the browser HERE after checkout.
-# This page looks up the license (webhooks usually beat the redirect, but we
-# poll briefly in case the webhook hasn't landed yet) and then bounces the
-# browser into the desktop app via captionplayer://activate?key=XXXX
 # ---------------------------------------------------------------------------
 @app.route("/thank-you", methods=["GET"])
 def thank_you():
-    # Paystack appends ?reference=... or ?trxref=... ; Paddle can be configured
-    # to append ?transaction_id={checkout.id} in its success_url settings.
     reference = (
         request.args.get("reference")
         or request.args.get("trxref")
@@ -209,48 +207,47 @@ def thank_you():
         return Response("<h2>Missing payment reference.</h2>", mimetype="text/html"), 400
 
     license_key = None
-    try:
-        result = supabase.table("licenses").select("*").eq("reference", reference).execute()
-        if result.data and len(result.data) > 0:
-            license_key = result.data[0]["license_key"]
-    except Exception as e:
-        print(f"Lookup error on /thank-you: {e}")
+    # Poll up to 3 times to give asynchronous live webhooks time to write to Supabase
+    for _ in range(3):
+        try:
+            result = supabase.table("licenses").select("*").eq("reference", reference).execute()
+            if result.data and len(result.data) > 0:
+                license_key = result.data[0]["license_key"]
+                break
+        except Exception as e:
+            print(f"Lookup error on /thank-you: {e}")
+        time.sleep(1)
 
     if license_key:
         html = f"""
         <html>
-        <head><meta charset="utf-8"><title>Activating...</title></head>
-        <body style="font-family: sans-serif; text-align:center; padding-top:60px;">
-            <h2>Payment successful!</h2>
-            <p>Your license key: <b>{license_key}</b></p>
-            <p>Opening Premium Live Caption Player to activate automatically...</p>
-            <p>If nothing happens, click below:</p>
-            <a href="captionplayer://activate?key={license_key}">Activate Now</a>
+        <head>
+            <meta charset="utf-8">
+            <title>Activating Player...</title>
             <script>
-                window.location.href = "captionplayer://activate?key={license_key}";
+                window.onload = function() {{
+                    window.location.href = "captionplayer://activate?key={license_key}";
+                    setTimeout(function() {{
+                        document.getElementById('status').innerText = "If your player didn't open automatically, please copy your key manually:";
+                    }}, 2500);
+                }};
             </script>
+        </head>
+        <body style="font-family: sans-serif; text-align:center; padding-top:60px; background-color: #f8f9fa; color: #333;">
+            <div style="max-width:500px; margin:0 auto; padding:20px; border:1px solid #ddd; background:#fff; border-radius:8px;">
+                <h2 style="color: #28a745;">Payment Successful!</h2>
+                <p id="status">Launching Premium Live Caption Player...</p>
+                <div style="background:#f1f1f1; padding:15px; border-radius:4px; font-family:monospace; font-weight:bold; font-size:1.2em; margin: 15px 0; border: 1px dashed #bbb; letter-spacing: 1px;">
+                    {license_key}
+                </div>
+            </div>
         </body>
         </html>
         """
-        return Response(html, mimetype="text/html"), 200
+        return Response(html, mimetype="text/html")
     else:
-        # Webhook may not have landed yet — auto-refresh this page for a few seconds.
-        html = """
-        <html>
-        <head><meta charset="utf-8"><meta http-equiv="refresh" content="2"><title>Processing...</title></head>
-        <body style="font-family: sans-serif; text-align:center; padding-top:60px;">
-            <h2>Confirming your payment...</h2>
-            <p>This page will refresh automatically. This usually takes a few seconds.</p>
-        </body>
-        </html>
-        """
-        return Response(html, mimetype="text/html"), 200
-
+        return Response("<h2>Payment received! We are still processing your license key. Please refresh this page in 5 seconds.</h2>", mimetype="text/html")
 
 if __name__ == "__main__":
-    print("====================================================")
-    print("LIVE CAPTION PLAYER LICENSING INFRASTRUCTURE SERVER")
-    print("====================================================")
-
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=False)
+    # Production configurations should be set via gunicorn on Render
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
