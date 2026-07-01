@@ -175,17 +175,32 @@ def paddle_webhook():
     payload = request.get_json() or {}
     event_type = payload.get("event_type")
 
-    if event_type == "transaction.completed":
+    # 1. Listen for the core subscription status lifecycle events
+    if event_type in ["subscription.created", "subscription.updated", "transaction.completed"]:
         tx_data = payload.get("data", {})
-        reference = tx_data.get("id")  # Paddle transaction id, used as our reference
-        email = (tx_data.get("customer") or {}).get("email", "")
+        reference = tx_data.get("id")  # This tracks the subscription ID (sub_...)
+        status = tx_data.get("status")  # e.g., "trialing", "active", "past_due", "paused"
+        
+        customer_obj = tx_data.get("customer", {})
+        email = customer_obj.get("email", "") if isinstance(customer_obj, dict) else ""
 
         if reference:
-            upsert_license(reference, email, source="paddle")
+            # If the user is either active or in an approved initial trial state, provision/keep them active
+            if status in ["active", "trialing"]:
+                print(f"Paddle subscription {reference} state is: {status}. Generating/Ensuring Active License.")
+                upsert_license(reference, email, source="paddle")
+            else:
+                # If they cancel or card fails (past_due), automatically flag their license string as Revoked
+                print(f"Paddle subscription {reference} entered a restrictive state: {status}. Revoking license.")
+                try:
+                    supabase.table("licenses").update({"status": "Expired"}).eq("reference", reference).execute()
+                except Exception as db_err:
+                    print(f"Error downgrading canceled license reference status: {db_err}")
         else:
-            print("Paddle transaction.completed event missing id; skipped.")
+            print(f"Paddle event {event_type} missing tracking metadata reference ID; skipped.")
 
     return jsonify({"received": True}), 200
+
 
 
 # ---------------------------------------------------------------------------
