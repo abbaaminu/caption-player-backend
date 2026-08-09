@@ -192,7 +192,7 @@ def paddle_webhook():
 @app.route("/paddle-checkout", methods=["GET"])
 def paddle_checkout_fallback():
     return Response(
-        "<script>window.location.href='https://premiumcaptionapp.vercel.app/paddle-checkout.html';</script>",
+        "<script>window.location.href='https://caption.stackbuildco.com/paddle-checkout.html';</script>",
         mimetype="text/html"
     ), 302
 
