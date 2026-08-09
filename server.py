@@ -134,8 +134,6 @@ def paystack_webhook():
 
 # ---------------------------------------------------------------------------
 # PADDLE WEBHOOK — Paddle Billing HMAC-SHA256
-# Header format: 'ts=1700000000;h1=abcdef...'
-# Signed payload: '{ts}:{raw_body}'
 # ---------------------------------------------------------------------------
 def verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
     if not PADDLE_WEBHOOK_SECRET or not signature_header:
@@ -171,6 +169,7 @@ def paddle_webhook():
     event_type = payload.get("event_type", "")
     print(f"Paddle event received: {event_type}")
 
+    # One-time purchases send transaction.completed
     if event_type == "transaction.completed":
         tx_data   = payload.get("data", {})
         reference = tx_data.get("id", "")
@@ -180,31 +179,15 @@ def paddle_webhook():
         else:
             print("Paddle transaction.completed missing id — skipped.")
 
+    # Retained for manual cancellations or refunds
     elif event_type in ("subscription.canceled", "subscription.paused"):
-        # Mark license inactive when customer cancels or payment fails
-        sub_data  = payload.get("data", {})
-        reference = sub_data.get("transaction_id", "") or sub_data.get("id", "")
-        if reference:
-            try:
-                existing = supabase.table("licenses").select("*").eq("reference", reference).execute()
-                if existing.data and len(existing.data) > 0:
-                    license_key = existing.data[0]["license_key"]
-                    supabase.table("licenses").update({"status": "Cancelled"}).eq(
-                        "license_key", license_key
-                    ).execute()
-                    print(f"License CANCELLED for ref={reference} key={license_key}")
-            except Exception as e:
-                print(f"Error cancelling license: {e}")
+        print(f"Subscription event ignored for lifetime purchases: {event_type}")
 
     return jsonify({"received": True}), 200
 
 
 # ---------------------------------------------------------------------------
-# PADDLE CHECKOUT PAGE
-# Desktop app opens this URL in the browser. It loads Paddle.js and opens the
-# checkout overlay immediately. Approved domain: premiumcaptionapp.vercel.app
-# so we serve this from the Vercel site (paddle-checkout.html), NOT from here.
-# This route is kept as a fallback only.
+# PADDLE CHECKOUT FALLBACK PAGE
 # ---------------------------------------------------------------------------
 @app.route("/paddle-checkout", methods=["GET"])
 def paddle_checkout_fallback():
@@ -216,7 +199,6 @@ def paddle_checkout_fallback():
 
 # ---------------------------------------------------------------------------
 # THANK-YOU PAGE — browser lands here after payment from any provider.
-# Looks up license key and deep-links back into the desktop app.
 # ---------------------------------------------------------------------------
 @app.route("/thank-you", methods=["GET"])
 def thank_you():
@@ -274,7 +256,7 @@ def thank_you():
 <body>
   <div class="card">
     <h2>Payment Successful!</h2>
-    <p>Your license key:</p>
+    <p>Your Lifetime License Key:</p>
     <div class="key">{license_key}</div>
     <p>The app is opening automatically to activate your license.<br>
        If nothing happens, click the button below:</p>
