@@ -13,7 +13,7 @@ load_dotenv()
 
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
-PAYSTACK_SECRET_KEY   = os.environ.get("PAYSTACK_SECRET_KEY")
+PAYSTACK_SECRET_KEY = os.environ.get("PAYSTACK_SECRET_KEY")
 PADDLE_WEBHOOK_SECRET = os.environ.get("PADDLE_WEBHOOK_SECRET")
 
 if not supabase_url or not supabase_key:
@@ -102,7 +102,7 @@ def verify_license():
 # ---------------------------------------------------------------------------
 @app.route("/webhook/paystack", methods=["POST"])
 def paystack_webhook():
-    raw_body  = request.get_data()
+    raw_body = request.get_data()
     signature = request.headers.get("x-paystack-signature", "")
 
     if not PAYSTACK_SECRET_KEY:
@@ -121,9 +121,9 @@ def paystack_webhook():
 
     payload = request.get_json() or {}
     if payload.get("event") == "charge.success":
-        data      = payload.get("data", {})
+        data = payload.get("data", {})
         reference = data.get("reference")
-        email     = (data.get("customer") or {}).get("email", "")
+        email = (data.get("customer") or {}).get("email", "")
         if reference:
             upsert_license(reference, email, source="paystack")
         else:
@@ -158,28 +158,26 @@ def verify_paddle_signature(raw_body: bytes, signature_header: str) -> bool:
 
 @app.route("/webhook/paddle", methods=["POST"])
 def paddle_webhook():
-    raw_body         = request.get_data()
+    raw_body = request.get_data()
     signature_header = request.headers.get("Paddle-Signature", "")
 
     if not verify_paddle_signature(raw_body, signature_header):
         print("Paddle webhook signature mismatch — ignoring.")
         return jsonify({"received": False}), 401
 
-    payload    = request.get_json() or {}
+    payload = request.get_json() or {}
     event_type = payload.get("event_type", "")
     print(f"Paddle event received: {event_type}")
 
-    # One-time purchases send transaction.completed
     if event_type == "transaction.completed":
-        tx_data   = payload.get("data", {})
+        tx_data = payload.get("data", {})
         reference = tx_data.get("id", "")
-        email     = (tx_data.get("customer") or {}).get("email", "")
+        email = (tx_data.get("customer") or {}).get("email", "")
         if reference:
             upsert_license(reference, email, source="paddle")
         else:
             print("Paddle transaction.completed missing id — skipped.")
 
-    # Retained for manual cancellations or refunds
     elif event_type in ("subscription.canceled", "subscription.paused"):
         print(f"Subscription event ignored for lifetime purchases: {event_type}")
 
@@ -276,7 +274,6 @@ def thank_you():
         return Response(html, mimetype="text/html"), 200
 
     else:
-        # Webhook hasn't landed yet — auto-refresh every 2 seconds
         html = f"""<!DOCTYPE html>
 <html>
 <head>
