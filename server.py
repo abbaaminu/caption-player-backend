@@ -6,11 +6,14 @@ import uuid
 from datetime import datetime
 
 from flask import Flask, request, jsonify, Response
+from flask_cors import CORS
 from dotenv import load_dotenv
 from supabase import create_client
 
 app = Flask(__name__)
 load_dotenv()
+
+CORS(app, resources={r"/api/*": {"origins": ["https://caption.stackbuildco.com", "http://localhost:3000"]}})
 
 supabase_url = os.environ.get("SUPABASE_URL")
 supabase_key = os.environ.get("SUPABASE_KEY")
