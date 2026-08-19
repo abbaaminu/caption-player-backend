@@ -3,6 +3,7 @@ import sys
 import hmac
 import hashlib
 import uuid
+from datetime import datetime
 
 from flask import Flask, request, jsonify, Response
 from dotenv import load_dotenv
@@ -96,7 +97,55 @@ def verify_license():
         print(f"Database error in /verify: {e}")
         return jsonify({"valid": False, "message": "Server error, please try again"}), 200
 
+# ---------------------------------------------------------------------------
+# APPSUMO REDEMPTION — called by the frontend activation page
+# ---------------------------------------------------------------------------
+@app.route("/api/redeem-appsumo", methods=["POST"])
+def redeem_appsumo_key():
+    data = request.get_json() or {}
+    license_key = data.get("license_key")
+    email = data.get("email", "") # Optional, if you want to collect it on frontend
 
+    if not license_key:
+        return jsonify({"error": "License key is required."}), 400
+
+    try:
+        # 1. Query Supabase to verify the AppSumo key exists
+        response = supabase.table("appsumo_keys").select("*").eq(
+            "license_key", license_key.strip()
+        ).execute()
+        keys = response.data
+
+        if not keys or len(keys) == 0:
+            return jsonify({"error": "Invalid AppSumo license key."}), 404
+
+        key_record = keys[0]
+
+        # 2. Check if the key has already been used
+        if key_record.get("is_used"):
+            return jsonify({"error": "This license key has already been redeemed."}), 400
+
+        # 3. Update the appsumo_keys table (mark as used & set timestamp)
+        supabase.table("appsumo_keys").update({
+            "is_used": True,
+            "activated_at": datetime.utcnow().isoformat()
+        }).eq("license_key", license_key.strip()).execute()
+
+        # 4. Insert into standard licenses table so your /verify route works instantly
+        supabase.table("licenses").insert({
+            "license_key": license_key.strip(),
+            "status": "Active",
+            "email": email,
+            "reference": "APPSUMO_REDEEM",
+            "source": "appsumo",
+        }).execute()
+
+        print(f"APPSUMO REDEEMED: {license_key}")
+        return jsonify({"success": True, "message": "License redeemed successfully!"}), 200
+
+    except Exception as e:
+        print(f"Database error in /api/redeem-appsumo: {e}")
+        return jsonify({"error": "Server error while redeeming. Please try again."}), 500
 # ---------------------------------------------------------------------------
 # PAYSTACK WEBHOOK — HMAC-SHA512 signature in x-paystack-signature header
 # ---------------------------------------------------------------------------
