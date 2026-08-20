@@ -154,7 +154,7 @@ def redeem_appsumo_key():
 
     except Exception as e:
         print(f"Database error in /api/redeem-appsumo: {e}")
-        return jsonify({"error": "Server error while redeeming. Please try again."}), 500
+        return jsonify({"error": f"Server error: {str(e)}"}), 500
 
 # ---------------------------------------------------------------------------
 # PAYSTACK WEBHOOK — HMAC-SHA512 signature in x-paystack-signature header
