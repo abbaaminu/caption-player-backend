@@ -107,7 +107,10 @@ def verify_license():
 def redeem_appsumo_key():
     data = request.get_json() or {}
     license_key = data.get("license_key")
-    email = data.get("email", "") # Optional, if you want to collect it on frontend
+    
+    # Safely handle the optional email so it passes NULL to Supabase if blank
+    raw_email = data.get("email")
+    email = raw_email.strip() if raw_email else None
 
     if not license_key:
         return jsonify({"error": "License key is required."}), 400
@@ -135,20 +138,24 @@ def redeem_appsumo_key():
         }).eq("license_key", license_key.strip()).execute()
 
         # 4. Insert into standard licenses table so your /verify route works instantly
+        # FIXED: Ensure the reference is uniquely generated based on the license key!
+        unique_reference = f"APPSUMO_{license_key.strip()}"
+        
         supabase.table("licenses").insert({
             "license_key": license_key.strip(),
             "status": "Active",
             "email": email,
-            "reference": "APPSUMO_REDEEM",
+            "reference": unique_reference,
             "source": "appsumo",
         }).execute()
 
-        print(f"APPSUMO REDEEMED: {license_key}")
+        print(f"APPSUMO REDEEMED: {license_key.strip()}")
         return jsonify({"success": True, "message": "License redeemed successfully!"}), 200
 
     except Exception as e:
         print(f"Database error in /api/redeem-appsumo: {e}")
         return jsonify({"error": "Server error while redeeming. Please try again."}), 500
+
 # ---------------------------------------------------------------------------
 # PAYSTACK WEBHOOK — HMAC-SHA512 signature in x-paystack-signature header
 # ---------------------------------------------------------------------------
