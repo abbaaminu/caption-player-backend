@@ -1,0 +1,17 @@
+name: Keep Supabase Alive
+
+on:
+  schedule:
+    # This schedules the ping to run every Tuesday and Friday at midnight UTC (roughly every 3-4 days)
+    - cron: '0 0 * * 2,5'
+  workflow_dispatch: # Allows you to trigger it manually anytime from GitHub
+
+jobs:
+  ping_supabase:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send keep-alive ping to Supabase Rest API
+        run: |
+          curl -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+            -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}"
