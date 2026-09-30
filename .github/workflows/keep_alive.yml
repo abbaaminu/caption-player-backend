@@ -1,4 +1,4 @@
-name: Keep Supabase Alive
+name: Keep Supabase Alive (Caption-Player)
 
 on:
   schedule:
@@ -14,7 +14,7 @@ jobs:
         run: |
           echo "Sending live query to Supabase..."
           
-          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/YOUR_TABLE_NAME?select=id&limit=1" \
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/licenses?select=id&limit=1" \
             -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
             -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}")
 
