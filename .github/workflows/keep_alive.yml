@@ -2,16 +2,33 @@ name: Keep Supabase Alive
 
 on:
   schedule:
-    # This schedules the ping to run every Tuesday and Friday at midnight UTC (roughly every 3-4 days)
-    - cron: '0 0 * * 2,5'
-  workflow_dispatch: # Allows you to trigger it manually anytime from GitHub
+    # Runs twice a day (at 00:00 and 12:00 UTC) to guarantee at least one successful daily ping
+    - cron: '0 0,12 * * *'
+  workflow_dispatch: # Allows you to manually trigger it anytime for testing
 
 jobs:
   ping_supabase:
     runs-on: ubuntu-latest
     steps:
-      - name: Send keep-alive ping to Supabase Rest API
+      - name: Send keep-alive query to Supabase REST API
         run: |
-          curl -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/" \
+          echo "Sending live query to Supabase..."
+          
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" -X GET "${{ secrets.SUPABASE_URL }}/rest/v1/YOUR_TABLE_NAME?select=id&limit=1" \
             -H "apikey: ${{ secrets.SUPABASE_KEY }}" \
-            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}"
+            -H "Authorization: Bearer ${{ secrets.SUPABASE_KEY }}")
+
+          # Separate the body and status code for debugging
+          BODY=$(echo "$RESPONSE" | sed '/HTTP_STATUS:/d')
+          STATUS=$(echo "$RESPONSE" | tr -d '\r' | sed -n 's/.*HTTP_STATUS:\([0-9]*\)/\1/p')
+
+          echo "HTTP Status Code: $STATUS"
+          echo "API Response: $BODY"
+
+          # Check if the database request was successful (200 OK)
+          if [ "$STATUS" -eq 200 ]; then
+            echo "✅ Success: Database activity recorded."
+          else
+            echo "❌ Error: API request failed with status $STATUS. Check your RLS or Table Name."
+            exit 1
+          fi
