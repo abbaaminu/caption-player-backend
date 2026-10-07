@@ -226,19 +226,33 @@ def paddle_webhook():
 
     payload = request.get_json() or {}
     event_type = payload.get("event_type", "")
+    data = payload.get("data", {})
     print(f"Paddle event received: {event_type}")
 
+    # 1. PURCHASE SUCCESSFUL -> GENERATE/UPSERT LICENSE
     if event_type == "transaction.completed":
-        tx_data = payload.get("data", {})
-        reference = tx_data.get("id", "")
-        email = (tx_data.get("customer") or {}).get("email", "")
+        reference = data.get("id", "")
+        email = (data.get("customer") or {}).get("email", "")
         if reference:
             upsert_license(reference, email, source="paddle")
         else:
             print("Paddle transaction.completed missing id — skipped.")
 
-    elif event_type in ("subscription.canceled", "subscription.paused"):
-        print(f"Subscription event ignored for lifetime purchases: {event_type}")
+    # 2. REFUND, CANCELLATION, OR PAUSE -> REVOKE LICENSE
+    elif event_type in ("adjustment.created", "subscription.canceled", "subscription.paused"):
+        # Extract transaction_id or reference linked to the payment
+        transaction_id = data.get("transaction_id") or data.get("id", "")
+
+        if transaction_id:
+            try:
+                # Update status in Supabase so /verify fails for this key
+                supabase.table("licenses").update({
+                    "status": "Revoked"
+                }).eq("reference", transaction_id).execute()
+                
+                print(f"LICENSE REVOKED | event={event_type} | ref={transaction_id}")
+            except Exception as e:
+                print(f"Error revoking license in Supabase: {e}")
 
     return jsonify({"received": True}), 200
 
